@@ -63,19 +63,19 @@ if st.button("🚀 Сгенерировать", type="primary") and text.strip()
     for i, para in enumerate(paragraphs):
         with st.spinner(f"Абзац {i+1}/{len(paragraphs)}"):
             # 1. Перевод на EN (с retry)
-            translate_prompt = f"Translate this paragraph to English accurately, keeping key details: '{para}'."
+            translate_prompt = f"Translate this paragraph to English accurately, keeping key visual details: '{para}'."
             translate_response = generate_with_retry("gemini-2.5-flash", [translate_prompt], types.GenerateContentConfig(max_output_tokens=150))
             en_para = translate_response.text.strip() if translate_response and translate_response.text and translate_response.text.strip() else para
 
             # 2. Генерация промпта на EN (без лишнего нарратива)
-            base_prompt = f"Extract the core visual scene from this English paragraph: '{en_para}'. Ignore narrative, introduction, history, or 'today we will'. Describe only the main visual elements (objects, setting, action, lighting, colors). Style: {style if style != 'без стиля' else 'natural'}. Format: 'A highly detailed [style] image of [visual scene], masterpiece, 16:9'. Keep it 80-120 words, vivid and compositional."
+            base_prompt = f"Extract the core visual scene from this English paragraph: '{en_para}'. Ignore narrative, introduction, history, questions, or 'what do they have in common'. Describe only the main visual elements (objects, setting, action, lighting, colors, composition). Style: {style if style != 'без стиля' else 'natural'}. Format: 'A highly detailed [style] image of [visual scene description], masterpiece, 16:9'. Keep it 60-100 words, vivid and focused."
             response = generate_with_retry("gemini-2.5-flash", [base_prompt], types.GenerateContentConfig(max_output_tokens=200))
             if response and response.text and response.text.strip():
                 img_prompt = response.text.strip()
             else:
-                # Улучшенный fallback: Короткий EN-промпт без лишнего (ручная экстракция ключевых элементов)
-                key_scene = en_para.split('.')[0] if '.' in en_para else en_para[:100]  # Берем первую фразу
-                img_prompt = f"A highly detailed {style} image of the main visual scene from '{key_scene}', masterpiece, 16:9."
+                # Улучшенный fallback: Короткий EN-промпт без лишнего (ручная экстракция)
+                key_words = en_para.split(',')[0] if ',' in en_para else en_para.split('.')[0]  # Первое ключевое предложение
+                img_prompt = f"A highly detailed {style} image of the main visual scene involving {key_words}, masterpiece, 16:9."
                 st.warning(f"Пустой ответ для {i+1}. Fallback EN-промпт без нарратива.")
             prompts.append(img_prompt)
             st.write(f"**{i+1}. Абзац (RU):** {para[:80]}...")
@@ -119,4 +119,4 @@ if st.button("🚀 Сгенерировать", type="primary") and text.strip()
         st.download_button("📦 Скачать картинки (ZIP)", zip_buffer, "nano_banana_images.zip", "application/zip")
         st.success("Готово! (SynthID на картинках).")
 
-st.info("🔑 Квоты: https://ai.dev/usage (free: 10 RPM для промптов; 0 для image).\nBilling для картинок: https://console.cloud.google.com/billing ($0.039/изобр.).\nПромпты теперь на EN, без лишнего (только визуальная сцена).")
+st.info("🔑 Квоты: https://ai.dev/usage (free: 10 RPM для промптов; 0 для image).\nBilling для картинок: https://console.cloud.google.com/billing ($0.039/изобр.).\nПромпты теперь на EN, без лишнего (только визуал).")
