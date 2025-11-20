@@ -68,20 +68,18 @@ if st.button("🚀 Сгенерировать промпты и картинки
             if generate_images:
                 with st.spinner(f"Картинка {i+1}/{len(paragraphs)}"):
                     try:
+                        # Убрал response_mime_type — модель возвращает изображение автоматически
                         img_response = image_model.generate_content(
                             prompt_text,
-                            generation_config=genai.types.GenerationConfig(
-                                response_mime_type="image/png",  # Для Nano Banana
-                                temperature=0.4  # Стабильность
-                            )
+                            generation_config=genai.types.GenerationConfig()  # Пустой config (без MIME/temperature)
                         )
-                        # Извлекаем изображение
+                        # Извлекаем изображение (по docs: inline_data в parts)
                         img = img_response.parts[0].inline_data.as_image()  # PIL Image
                         images.append(img)
                         st.image(img, caption=f"Картинка {i+1} (Nano Banana)", use_column_width=True)
                     except Exception as e:
                         st.error(f"Ошибка картинки {i+1}: {e}. Проверь квоты/billing для Nano Banana.")
-                        st.info("Совет: Включи billing в https://console.cloud.google.com/billing для стабильной генерации.")
+                        st.info("Совет: Включи billing в https://console.cloud.google.com/billing для стабильной генерации (free tier = 0 для image preview).")
 
             time.sleep(2)  # Пауза для квот (10 RPM в free tier)
 
