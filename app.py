@@ -1,5 +1,6 @@
 import streamlit as st
 import google.generativeai as genai
+import requests
 from PIL import Image
 import io
 import zipfile
@@ -11,10 +12,6 @@ genai.configure(api_key=st.secrets["GOOGLE_API_KEY"])
 # АКТУАЛЬНАЯ МОДЕЛЬ (stable, бесплатно, ноябрь 2025)
 MODEL = "gemini-2.5-flash"
 model = genai.GenerativeModel(MODEL)
-
-# Модель Nano Banana для картинок (preview, требует billing для стабильности)
-IMAGE_MODEL = "gemini-2.5-flash-image-preview"
-image_model = genai.GenerativeModel(IMAGE_MODEL)
 
 st.set_page_config(page_title="Текст → Описания Картинок (Gemini 2.5)", layout="centered")
 st.title("📖 Текст → Детальные Промпты для Картинок (Gemini 2.5 Flash)")
@@ -30,7 +27,7 @@ style = st.selectbox(
     ["реалистично, кинематографично", "аниме", "акварель", "фэнтези", "киберпанк", "как в Pixar", "без стиля"]
 )
 
-generate_images = st.checkbox("Генерировать картинки из промптов (Nano Banana, требует billing, ~$0.039/шт)", value=False)
+generate_images = st.checkbox("Генерировать картинки из промптов (Pollinations.AI, бесплатно, без billing)", value=False)
 
 if st.button("🚀 Сгенерировать промпты", type="primary") and text.strip():
     paragraphs = [p.strip() for p in text.split("\n\n") if p.strip()]
@@ -64,21 +61,21 @@ if st.button("🚀 Сгенерировать промпты", type="primary") a
                 st.write(f"**{i+1}. Абзац:** {para[:80]}...")
                 st.write(f"**Промпт (fallback):** {prompt_text}")
 
-            # Генерация картинки из промпта (если включено)
+            # Генерация картинки из промпта (если включено, через Pollinations.AI — бесплатно, без ключа)
             if generate_images:
                 with st.spinner(f"Картинка {i+1}/{len(paragraphs)}"):
                     try:
-                        # Nano Banana без generation_config (убрал MIME — по docs это вызывает 400)
-                        img_response = image_model.generate_content(prompt_text)
-                        # Извлекаем изображение
-                        img = img_response.parts[0].inline_data.as_image()  # PIL Image
+                        # Pollinations.AI API (бесплатно, без ключа, по docs GitHub)
+                        url = "https://image.pollinations.ai/prompt/" + prompt_text.replace(" ", "%20")
+                        r = requests.get(url, timeout=30)
+                        r.raise_for_status()
+                        img = Image.open(io.BytesIO(r.content))
                         images.append(img)
-                        st.image(img, caption=f"Картинка {i+1} (Nano Banana)", use_column_width=True)
+                        st.image(img, caption=f"Картинка {i+1} (Pollinations.AI)", use_column_width=True)
                     except Exception as e:
-                        st.error(f"Ошибка картинки {i+1}: {e}. Проверь квоты/billing для Nano Banana.")
-                        st.info("Совет: Включи billing в https://console.cloud.google.com/billing (free tier = 0 для image preview).")
+                        st.error(f"Ошибка картинки {i+1}: {e}. API может быть перегружен (попробуй позже).")
 
-            time.sleep(2)  # Пауза для квот (10 RPM в free tier)
+            time.sleep(2)  # Пауза для квот Gemini (10 RPM в free tier)
 
         st.divider()
 
@@ -106,8 +103,8 @@ if st.button("🚀 Сгенерировать промпты", type="primary") a
         st.download_button(
             "📦 Скачать картинки (ZIP)",
             zip_buffer,
-            "nano_banana_images.zip",
+            "pollinations_images.zip",
             "application/zip"
         )
 
-st.info("🔑 Ключ: https://aistudio.google.com/app/apikey\nКвоты: https://ai.dev/usage (free tier: 10 RPM; для Nano Banana — billing для >10 изображений/день).\nВсе картинки с SynthID-водяным знаком.")
+st.info("🔑 Ключ: https://aistudio.google.com/app/apikey\nКвоты: https://ai.dev/usage (промпты бесплатно; картинки — Pollinations.AI, без лимитов, без billing).\nВсе картинки генерируются внутри приложения.")
