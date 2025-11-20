@@ -5,7 +5,7 @@ from PIL import Image
 import io
 import zipfile
 import time
-import random  # Для jitter в retry
+import random
 
 # === КЛИЕНТ С КЛЮЧЕМ ===
 GOOGLE_API_KEY = st.secrets["GOOGLE_API_KEY"]
@@ -29,19 +29,22 @@ max_paragraphs = st.slider("Макс. абзацев (экономия квот)
 
 generate_images = st.checkbox("Генерировать реальные картинки (требует billing, ~$0.039/шт)", value=False)
 
-def generate_with_retry(model_name, contents, config, max_retries=3):
+def generate_with_retry(model_name, contents, config=None, max_retries=3):
     for attempt in range(max_retries):
         try:
             response = client.models.generate_content(model=model_name, contents=contents, config=config)
             return response
         except Exception as e:
             if '503' in str(e) or 'UNAVAILABLE' in str(e):
-                wait = (2 ** attempt) + random.uniform(0, 1)  # Exponential backoff + jitter
+                wait = (2 ** attempt) + random.uniform(0, 1)
                 st.warning(f"Перегрузка сервера (503). Повтор {attempt+1}/{max_retries} через {wait:.1f} сек...")
                 time.sleep(wait)
+            elif '429' in str(e) or 'RESOURCE_EXHAUSTED' in str(e):
+                st.error(f"Квота исчерпана (429). Включи billing для {model_name}.")
+                return None
             else:
                 raise e
-    return None  # Если все ретраи провалились
+    return None
 
 if st.button("🚀 Сгенерировать", type="primary") and text.strip():
     paragraphs = [p.strip() for p in text.split("\n\n") if p.strip()][:max_paragraphs]
@@ -58,18 +61,18 @@ if st.button("🚀 Сгенерировать", type="primary") and text.strip()
 
     for i, para in enumerate(paragraphs):
         with st.spinner(f"Абзац {i+1}/{len(paragraphs)}"):
-            # 1. Перевод на EN (если RU)
+            # 1. Перевод на EN
             translate_prompt = f"Translate this paragraph to English accurately: '{para}'."
-            translate_response = generate_with_retry("gemini-2.5-flash", translate_prompt, types.GenerateContentConfig(max_output_tokens=150))
+            translate_response = generate_with_retry("gemini-2.5-flash", [translate_prompt], types.GenerateContentConfig(max_output_tokens=150))
             en_para = translate_response.text.strip() if translate_response and translate_response.text and translate_response.text.strip() else para
 
             # 2. Генерация промпта на EN
             base_prompt = f"Create a detailed image prompt based on this English paragraph: '{en_para}'. Style: {style if style != 'без стиля' else 'natural'}. Format: 'A highly detailed [style] image of [scene], masterpiece, 16:9'. Keep it 100-150 words."
-            response = generate_with_retry("gemini-2.5-flash", base_prompt, types.GenerateContentConfig(max_output_tokens=200))
+            response = generate_with_retry("gemini-2.5-flash", [base_prompt], types.GenerateContentConfig(max_output_tokens=200))
             if response and response.text and response.text.strip():
                 img_prompt = response.text.strip()
             else:
-                img_prompt = f"A detailed image of: {en_para[:200]}..."  # Улучшенный fallback на EN
+                img_prompt = f"A detailed image of: {en_para[:200]} in {style} style, masterpiece, 16:9."
                 st.warning(f"Пустой ответ для {i+1}. Fallback EN-промпт.")
             prompts.append(img_prompt)
             st.write(f"**{i+1}. Абзац (RU):** {para[:80]}...")
@@ -78,21 +81,22 @@ if st.button("🚀 Сгенерировать", type="primary") and text.strip()
 
             # 3. Картинки (если включено)
             if generate_images:
-                img_response = generate_with_retry("gemini-2.5-flash-image-preview", img_prompt, types.GenerateContentConfig(max_output_tokens=1290))  # Без MIME, токены для image
+                if not st.session_state.get('billing_enabled', False):
+                    st.warning("Для картинок включи billing в console.cloud.google.com/billing.")
+                img_response = generate_with_retry("gemini-2.5-flash-image", [img_prompt])  # Без config, по docs
                 img_found = False
                 if img_response:
-                    for part in img_response.candidates[0].content.parts:
-                        if part.inline_data:
-                            img_bytes = part.inline_data.data
-                            img = Image.open(io.BytesIO(img_bytes))
+                    for part in img_response.parts:  # По docs: response.parts
+                        if part.inline_data is not None:
+                            img = part.as_image()  # По docs: part.as_image()
                             images.append(img)
                             st.image(img, caption=f"Картинка {i+1}", use_column_width=True)
                             img_found = True
                             break
                 if not img_found:
-                    st.warning(f"Нет изображения для {i+1}. (Проверь billing — free tier = 0 для image).")
+                    st.warning(f"Нет изображения для {i+1}. (Billing обязателен для Nano Banana).")
 
-            # Задержка для RPM (10/мин)
+            # Задержка для RPM
             if i < len(paragraphs) - 1:
                 time.sleep(6)
         
@@ -114,4 +118,4 @@ if st.button("🚀 Сгенерировать", type="primary") and text.strip()
         st.download_button("📦 Скачать картинки (ZIP)", zip_buffer, "nano_banana_images.zip", "application/zip")
         st.success("Готово! (SynthID на картинках).")
 
-st.info("🔑 Квоты: https://ai.dev/usage (free: 10 RPM, 250 RPD для промптов; 0 для image).\nBilling для картинок: https://console.cloud.google.com/billing (Tier 1: 500 RPM, $0.039/изобр.).\nПромпты теперь всегда на EN.")
+st.info("🔑 Квоты: https://ai.dev/usage (free: 10 RPM для промптов; 0 для image).\nBilling для картинок: https://console.cloud.google.com/billing ($0.039/изобр.).\nПромпты всегда на EN.")
