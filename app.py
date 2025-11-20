@@ -1,12 +1,13 @@
 import streamlit as st
-from google import genai  # Новый SDK: импорт для Gemini 2.5+
+from google import genai  # Новый SDK для Gemini 2.5+
 from google.genai import types  # Для config
 from PIL import Image
 import io
 import zipfile
 
-# === ТВОЙ КЛЮЧ (берётся из secrets) ===
-client = genai.Client()  # Теперь работает!
+# === КЛИЕНТ С КЛЮЧЕМ (явно, чтобы избежать ValueError) ===
+GOOGLE_API_KEY = st.secrets["GOOGLE_API_KEY"]
+client = genai.Client(api_key=GOOGLE_API_KEY)  # Теперь работает!
 
 st.set_page_config(page_title="Текст → Промпты + Картинки (Nano Banana)", layout="centered")
 st.title("📖 Текст → Промпты и Картинки (Gemini 2.5 + Nano Banana)")
@@ -57,19 +58,24 @@ if st.button("🚀 Сгенерировать", type="primary") and text.strip()
             # 2. Генерация картинки (если включено, через Nano Banana)
             if generate_images:
                 try:
-                    # Nano Banana: generate_content с промптом для изображения
+                    # Nano Banana: промпт для изображения
                     img_response = client.models.generate_content(
                         model="gemini-2.5-flash-image-preview",  # Nano Banana
                         contents=img_prompt,
                         config=types.GenerateContentConfig(response_mime_type="image/png")
                     )
-                    # Извлекаем изображение
+                    # Извлекаем изображение из parts (по docs)
+                    img_found = False
                     for part in img_response.candidates[0].content.parts:
                         if part.inline_data:
-                            img = Image.open(io.BytesIO(part.inline_data.data))
+                            img_bytes = part.inline_data.data  # base64 bytes
+                            img = Image.open(io.BytesIO(img_bytes))
                             images.append(img)
                             st.image(img, caption=f"Картинка {i+1}", use_column_width=True)
+                            img_found = True
                             break
+                    if not img_found:
+                        st.warning(f"Нет изображения для абзаца {i+1}. Проверь промпт.")
                 except Exception as e:
                     st.error(f"Ошибка картинки {i+1}: {e}. Проверь billing и квоты (нужен Tier 1).")
 
