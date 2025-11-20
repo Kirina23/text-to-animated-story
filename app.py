@@ -7,14 +7,13 @@ import zipfile
 # === ТВОЙ КЛЮЧ ===
 genai.configure(api_key=st.secrets["GOOGLE_API_KEY"])
 
-# МОДЕЛЬ ДЛЯ ИЗОБРАЖЕНИЙ (Imagen 3 — работает бесплатно!)
-MODEL = "imagen-3.0-generate-fast-001"
+# МОДЕЛЬ Nano Banana (работает бесплатно!)
+MODEL = "gemini-2.5-flash-image"
 
-# Создаём модель для изображений (НЕ GenerativeModel!)
-image_model = genai.ImageGenerationModel(MODEL)
+model = genai.GenerativeModel(MODEL)
 
-st.set_page_config(page_title="Текст → Картинки (Imagen 3)", layout="centered")
-st.title("📖 Текст → Картинки (Imagen 3 / Nano Banana)")
+st.set_page_config(page_title="Текст → Картинки (Nano Banana)", layout="centered")
+st.title("📖 Текст → Картинки (Nano Banana / Gemini)")
 
 text = st.text_area(
     "Вставь текст (каждый абзац = одна картинка)",
@@ -34,31 +33,38 @@ if st.button("🚀 Сгенерировать картинки", type="primary")
         st.error("Нет абзацев! Разделяй их пустой строкой.")
         st.stop()
 
-    st.write(f"Генерирую **{len(paragraphs)}** картинок через Imagen 3...")
+    st.write(f"Генерирую **{len(paragraphs)}** картинок через Nano Banana...")
 
     images = []
     for i, para in enumerate(paragraphs):
         with st.spinner(f"Картинка {i+1}/{len(paragraphs)}"):
-            prompt = para
+            prompt = f"Generate an image of: {para}"
             if style != "без стиля":
-                prompt += f". {style}, высокое качество, детализировано"
+                prompt += f". {style}, high quality, detailed, 16:9 aspect ratio, masterpiece"
 
             try:
-                # Генерация изображений (правильный метод!)
-                gen_images = image_model.generate_images(
-                    prompt=prompt,
-                    number_of_images=1,
-                    aspect_ratio="16:9",  # Соотношение сторон
-                    safety_filter_level="block_some",  # Фильтр безопасности
-                    person_generation="allow_adult"  # Разрешить людей
+                # Генерация через generate_content (стандартный метод)
+                response = model.generate_content(
+                    prompt,
+                    generation_config=genai.types.GenerationConfig(
+                        temperature=0.4,  # Стабильность
+                        response_mime_type="image/png"  # Формат ответа
+                    )
                 )
-                img = gen_images.images[0]  # Первое изображение
-                images.append(img)
-                st.image(img, caption=f"{i+1}. {para[:80]}...", use_column_width=True)
+                
+                # Извлекаем изображение из ответа
+                for part in response.parts:
+                    if part.inline_data:
+                        img = part.inline_data.as_image()  # PIL Image
+                        images.append(img)
+                        st.image(img, caption=f"{i+1}. {para[:80]}...", use_column_width=True)
+                        break
+                    else:
+                        st.warning(f"Нет изображения в ответе для абзаца {i+1}. Промпт: {prompt[:100]}...")
             except Exception as e:
                 st.error(f"Ошибка на абзаце {i+1}: {e}")
                 if "quota" in str(e).lower():
-                    st.warning("Квота исчерпана. Создай новый API-ключ или включи billing.")
+                    st.warning("Квота исчерпана. Создай новый API-ключ или включи billing в Google Cloud.")
 
     if images:
         # ZIP-архив для скачивания
@@ -74,8 +80,8 @@ if st.button("🚀 Сгенерировать картинки", type="primary")
         st.download_button(
             "📦 Скачать все картинки (ZIP)",
             zip_buffer,
-            "imagen3_story_images.zip",
+            "nano_banana_images.zip",
             "application/zip"
         )
 
-st.info("🔑 Ключ: https://aistudio.google.com/app/apikey\nЕсли ошибки — проверь квоты: https://ai.dev/usage")
+st.info("🔑 Ключ: https://aistudio.google.com/app/apikey\nКвоты: https://ai.dev/usage\nВсе изображения с водяным знаком SynthID.")
