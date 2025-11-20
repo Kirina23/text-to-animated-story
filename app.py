@@ -61,11 +61,11 @@ if st.button("🚀 Сгенерировать промпты", type="primary") a
             if generate_images:
                 with st.spinner(f"Картинка {i+1}/{len(paragraphs)}"):
                     success = False
-                    for attempt in range(3):  # Retry 3 раза для timeout
+                    for attempt in range(5):  # Retry 5 раз для timeout
                         try:
                             # Pollinations.AI API (бесплатно, без ключа, по docs GitHub)
                             url = "https://image.pollinations.ai/prompt/" + prompt_text.replace(" ", "%20")
-                            r = requests.get(url, timeout=120)  # Увеличил до 120 сек (по рекомендациям GitHub)
+                            r = requests.get(url, timeout=120)  # 120 сек (рекомендация GitHub)
                             r.raise_for_status()
                             img = Image.open(io.BytesIO(r.content))
                             images.append(img)
@@ -74,13 +74,16 @@ if st.button("🚀 Сгенерировать промпты", type="primary") a
                             break
                         except Exception as e:
                             if "timed out" in str(e).lower():
-                                st.warning(f"Timeout (перегрузка сервера). Retry {attempt+1}/3 через 10 сек...")
+                                st.warning(f"Timeout (перегрузка сервера). Retry {attempt+1}/5 через 10 сек...")
                                 time.sleep(10)
                             else:
                                 st.error(f"Ошибка картинки {i+1}: {e}. API может быть перегружен (попробуй позже).")
                                 break
                     if not success:
-                        st.warning(f"Не удалось сгенерировать картинку {i+1} после 3 попыток. Сервер Pollinations перегружен — попробуй позже.")
+                        st.warning(f"Не удалось сгенерировать картинку {i+1} после 5 попыток. Сервер Pollinations перегружен — попробуй через 5 мин.")
+                        # Fallback: Кнопка для AI Studio (бесплатно, без billing)
+                        studio_url = f"https://aistudio.google.com/prompts/new_chat?model=gemini-2.5-flash-image&prompt={prompt_text.replace(' ', '%20')}"
+                        st.markdown(f"[Генерировать в AI Studio (бесплатно)]({studio_url})", unsafe_allow_html=True)
 
             time.sleep(2)  # Пауза для квот Gemini (10 RPM в free tier)
 
