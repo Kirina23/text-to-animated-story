@@ -1,19 +1,12 @@
 import streamlit as st
-import google.generativeai as genai
+from google import genai  # Новый SDK!
+from google.genai import types  # Для config
 from PIL import Image
 import io
 import zipfile
-from io import BytesIO
 
-# === ТВОЙ КЛЮЧ ===
-genai.configure(api_key=st.secrets["GOOGLE_API_KEY"])
-
-# Стабильная модель для промптов (бесплатно)
-PROMPT_MODEL = "gemini-2.5-flash"
-prompt_model = genai.GenerativeModel(PROMPT_MODEL)
-
-# Клиент для Nano Banana (картинки — требует billing!)
-client = genai.Client()
+# === ТВОЙ КЛЮЧ (автоматически берётся из secrets или env) ===
+client = genai.Client()  # Теперь работает в новом SDK!
 
 st.set_page_config(page_title="Текст → Промпты + Картинки (Nano Banana)", layout="centered")
 st.title("📖 Текст → Промпты и Картинки (Gemini 2.5 + Nano Banana)")
@@ -45,10 +38,14 @@ if st.button("🚀 Сгенерировать", type="primary") and text.strip()
 
     for i, para in enumerate(paragraphs):
         with st.spinner(f"Абзац {i+1}/{len(paragraphs)}"):
-            # 1. Генерация промпта (бесплатно)
+            # 1. Генерация промпта (бесплатно, через gemini-2.5-flash)
             base_prompt = f"Создай детальный промпт для изображения на основе: '{para}'. Стиль: {style if style != 'без стиля' else 'натуральный'}. Формат: 'A highly detailed [style] image of [scene], masterpiece, 16:9'."
             try:
-                response = prompt_model.generate_content(base_prompt)
+                response = client.models.generate_content(
+                    model="gemini-2.5-flash",
+                    contents=base_prompt,
+                    config=types.GenerateContentConfig(max_output_tokens=200)
+                )
                 img_prompt = response.text.strip()
                 prompts.append(img_prompt)
                 st.write(f"**{i+1}. Абзац:** {para[:80]}...")
@@ -57,24 +54,24 @@ if st.button("🚀 Сгенерировать", type="primary") and text.strip()
                 st.error(f"Ошибка промпта {i+1}: {e}")
                 continue
 
-            # 2. Генерация картинки (если включено)
+            # 2. Генерация картинки (если включено, через Nano Banana)
             if generate_images:
                 try:
-                    # Nano Banana: generate_content с промптом
+                    # Nano Banana: generate_content с промптом для изображения
                     img_response = client.models.generate_content(
-                        model="gemini-2.5-flash-image-preview",
-                        contents=[img_prompt],
+                        model="gemini-2.5-flash-image-preview",  # Nano Banana
+                        contents=img_prompt,
+                        config=types.GenerateContentConfig(response_mime_type="image/png")
                     )
                     # Извлекаем изображение
                     for part in img_response.candidates[0].content.parts:
-                        if part.inline_data is not None:
-                            img_bytes = part.inline_data.data
-                            img = Image.open(BytesIO(img_bytes))
+                        if part.inline_data:
+                            img = Image.open(io.BytesIO(part.inline_data.data))
                             images.append(img)
                             st.image(img, caption=f"Картинка {i+1}", use_column_width=True)
                             break
                 except Exception as e:
-                    st.error(f"Ошибка картинки {i+1}: {e}. Проверь billing и квоты.")
+                    st.error(f"Ошибка картинки {i+1}: {e}. Проверь billing и квоты (нужен Tier 1).")
 
     # Скачивания
     if prompts:
@@ -102,4 +99,4 @@ if st.button("🚀 Сгенерировать", type="primary") and text.strip()
         )
         st.success("Готово! Картинки сгенерированы (с SynthID водяным знаком).")
 
-st.info("🔑 Billing: https://console.cloud.google.com/billing\nКвоты: https://ai.dev/usage\nБез 'Генерировать картинки' — только промпты бесплатно.")
+st.info("🔑 Billing для картинок: https://console.cloud.google.com/billing\nКвоты: https://ai.dev/usage\nБез чекбокса — только промпты бесплатно.")
