@@ -1,13 +1,14 @@
 import streamlit as st
-from google import genai  # Новый SDK для Gemini 2.5+
-from google.genai import types  # Для config
+from google import genai
+from google.genai import types
 from PIL import Image
 import io
 import zipfile
+import time
 
-# === КЛИЕНТ С КЛЮЧЕМ (явно, чтобы избежать ValueError) ===
+# === КЛИЕНТ С КЛЮЧЕМ ===
 GOOGLE_API_KEY = st.secrets["GOOGLE_API_KEY"]
-client = genai.Client(api_key=GOOGLE_API_KEY)  # Теперь работает!
+client = genai.Client(api_key=GOOGLE_API_KEY)
 
 st.set_page_config(page_title="Текст → Промпты + Картинки (Nano Banana)", layout="centered")
 st.title("📖 Текст → Промпты и Картинки (Gemini 2.5 + Nano Banana)")
@@ -23,16 +24,18 @@ style = st.selectbox(
     ["реалистично, кинематографично", "аниме", "акварель", "фэнтези", "киберпанк", "как в Pixar", "без стиля"]
 )
 
+max_paragraphs = st.slider("Макс. абзацев (экономия квот)", 1, 8, 5)  # Ограничение для free tier
+
 generate_images = st.checkbox("Генерировать реальные картинки (требует billing, ~$0.039/шт)", value=False)
 
 if st.button("🚀 Сгенерировать", type="primary") and text.strip():
-    paragraphs = [p.strip() for p in text.split("\n\n") if p.strip()]
+    paragraphs = [p.strip() for p in text.split("\n\n") if p.strip()][:max_paragraphs]
 
     if not paragraphs:
         st.error("Нет абзацев! Разделяй их пустой строкой.")
         st.stop()
 
-    st.write(f"Обрабатываю **{len(paragraphs)}** абзацев...")
+    st.write(f"Обрабатываю **{len(paragraphs)}** абзацев... (с задержкой для квот)")
 
     prompts = []
     images = []
@@ -40,44 +43,53 @@ if st.button("🚀 Сгенерировать", type="primary") and text.strip()
     for i, para in enumerate(paragraphs):
         with st.spinner(f"Абзац {i+1}/{len(paragraphs)}"):
             # 1. Генерация промпта (бесплатно, через gemini-2.5-flash)
-            base_prompt = f"Создай детальный промпт для изображения на основе: '{para}'. Стиль: {style if style != 'без стиля' else 'натуральный'}. Формат: 'A highly detailed [style] image of [scene], masterpiece, 16:9'."
+            base_prompt = f"Create a detailed image prompt based on this paragraph: '{para}'. Style: {style if style != 'без стиля' else 'natural'}. Format: 'A highly detailed [style] image of [scene], masterpiece, 16:9'. Keep it 100-150 words."
             try:
                 response = client.models.generate_content(
                     model="gemini-2.5-flash",
                     contents=base_prompt,
                     config=types.GenerateContentConfig(max_output_tokens=200)
                 )
-                img_prompt = response.text.strip()
+                # Проверка на None/пустой response
+                if response and response.text and response.text.strip():
+                    img_prompt = response.text.strip()
+                else:
+                    img_prompt = para  # Fallback: абзац как промпт
+                    st.warning(f"Пустой ответ для {i+1}. Использую fallback: {img_prompt[:50]}...")
                 prompts.append(img_prompt)
                 st.write(f"**{i+1}. Абзац:** {para[:80]}...")
                 st.write(f"**Промпт:** {img_prompt}")
             except Exception as e:
                 st.error(f"Ошибка промпта {i+1}: {e}")
+                img_prompt = para  # Fallback
+                prompts.append(img_prompt)
                 continue
 
-            # 2. Генерация картинки (если включено, через Nano Banana)
+            # 2. Генерация картинки (если включено)
             if generate_images:
                 try:
-                    # Nano Banana: промпт для изображения
                     img_response = client.models.generate_content(
-                        model="gemini-2.5-flash-image-preview",  # Nano Banana
+                        model="gemini-2.5-flash-image-preview",
                         contents=img_prompt,
                         config=types.GenerateContentConfig(response_mime_type="image/png")
                     )
-                    # Извлекаем изображение из parts (по docs)
                     img_found = False
                     for part in img_response.candidates[0].content.parts:
                         if part.inline_data:
-                            img_bytes = part.inline_data.data  # base64 bytes
+                            img_bytes = part.inline_data.data
                             img = Image.open(io.BytesIO(img_bytes))
                             images.append(img)
                             st.image(img, caption=f"Картинка {i+1}", use_column_width=True)
                             img_found = True
                             break
                     if not img_found:
-                        st.warning(f"Нет изображения для абзаца {i+1}. Проверь промпт.")
+                        st.warning(f"Нет изображения для {i+1}.")
                 except Exception as e:
-                    st.error(f"Ошибка картинки {i+1}: {e}. Проверь billing и квоты (нужен Tier 1).")
+                    st.error(f"Ошибка картинки {i+1}: {e}. Проверь billing.")
+
+            # Задержка для RPM (10/мин = 6 сек между)
+            if i < len(paragraphs) - 1:
+                time.sleep(6)
 
     # Скачивания
     if prompts:
@@ -103,6 +115,6 @@ if st.button("🚀 Сгенерировать", type="primary") and text.strip()
             "nano_banana_images.zip",
             "application/zip"
         )
-        st.success("Готово! Картинки сгенерированы (с SynthID водяным знаком).")
+        st.success("Готово! (СинтID водяной знак на картинках).")
 
-st.info("🔑 Billing для картинок: https://console.cloud.google.com/billing\nКвоты: https://ai.dev/usage\nБез чекбокса — только промпты бесплатно.")
+st.info("🔑 Квоты: https://ai.dev/usage\nДля большего — billing: https://console.cloud.google.com/billing\nЕсли 429 — подожди 4 сек или включи billing.")
