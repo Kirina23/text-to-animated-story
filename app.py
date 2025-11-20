@@ -24,7 +24,7 @@ style = st.selectbox(
     ["реалистично, кинематографично", "аниме", "акварель", "фэнтези", "киберпанк", "как в Pixar", "без стиля"]
 )
 
-max_paragraphs = st.slider("Макс. абзацев (экономия квот)", 1, 8, 5)  # Ограничение для free tier
+max_paragraphs = st.slider("Макс. абзацев (экономия квот)", 1, 8, 5)
 
 generate_images = st.checkbox("Генерировать реальные картинки (требует billing, ~$0.039/шт)", value=False)
 
@@ -35,6 +35,7 @@ if st.button("🚀 Сгенерировать", type="primary") and text.strip()
         st.error("Нет абзацев! Разделяй их пустой строкой.")
         st.stop()
 
+    progress = st.progress(0)
     st.write(f"Обрабатываю **{len(paragraphs)}** абзацев... (с задержкой для квот)")
 
     prompts = []
@@ -42,8 +43,20 @@ if st.button("🚀 Сгенерировать", type="primary") and text.strip()
 
     for i, para in enumerate(paragraphs):
         with st.spinner(f"Абзац {i+1}/{len(paragraphs)}"):
-            # 1. Генерация промпта (бесплатно, через gemini-2.5-flash)
-            base_prompt = f"Create a detailed image prompt based on this paragraph: '{para}'. Style: {style if style != 'без стиля' else 'natural'}. Format: 'A highly detailed [style] image of [scene], masterpiece, 16:9'. Keep it 100-150 words."
+            # 1. Генерация промпта (бесплатно, с переводом на EN)
+            translate_prompt = f"Translate this Russian paragraph to English: '{para}'."
+            try:
+                translate_response = client.models.generate_content(
+                    model="gemini-2.5-flash",
+                    contents=translate_prompt,
+                    config=types.GenerateContentConfig(max_output_tokens=150)
+                )
+                en_para = translate_response.text.strip() if translate_response and translate_response.text and translate_response.text.strip() else para
+            except Exception as e:
+                st.warning(f"Ошибка перевода {i+1}: {e}. Использую оригинал.")
+                en_para = para
+
+            base_prompt = f"Create a detailed image prompt based on this English paragraph: '{en_para}'. Style: {style if style != 'без стиля' else 'natural'}. Format: 'A highly detailed [style] image of [scene], masterpiece, 16:9'. Keep it 100-150 words."
             try:
                 response = client.models.generate_content(
                     model="gemini-2.5-flash",
@@ -54,24 +67,27 @@ if st.button("🚀 Сгенерировать", type="primary") and text.strip()
                 if response and response.text and response.text.strip():
                     img_prompt = response.text.strip()
                 else:
-                    img_prompt = para  # Fallback: абзац как промпт
+                    img_prompt = en_para  # Fallback: английский абзац
                     st.warning(f"Пустой ответ для {i+1}. Использую fallback: {img_prompt[:50]}...")
                 prompts.append(img_prompt)
-                st.write(f"**{i+1}. Абзац:** {para[:80]}...")
-                st.write(f"**Промпт:** {img_prompt}")
+                st.write(f"**{i+1}. Абзац (RU):** {para[:80]}...")
+                st.write(f"**Промпт (EN):** {img_prompt}")
             except Exception as e:
                 st.error(f"Ошибка промпта {i+1}: {e}")
-                img_prompt = para  # Fallback
+                img_prompt = en_para
                 prompts.append(img_prompt)
                 continue
 
-            # 2. Генерация картинки (если включено)
+            # 2. Генерация картинки (если включено, Nano Banana без MIME)
             if generate_images:
                 try:
                     img_response = client.models.generate_content(
-                        model="gemini-2.5-flash-image-preview",
+                        model="gemini-2.5-flash-image-preview",  # Nano Banana
                         contents=img_prompt,
-                        config=types.GenerateContentConfig(response_mime_type="image/png")
+                        config=types.GenerateContentConfig(
+                            response_modalities=["IMAGE"],  # Только изображение
+                            image_config=types.ImageConfig(aspect_ratio="16:9")  # Соотношение сторон
+                        )
                     )
                     img_found = False
                     for part in img_response.candidates[0].content.parts:
@@ -85,11 +101,13 @@ if st.button("🚀 Сгенерировать", type="primary") and text.strip()
                     if not img_found:
                         st.warning(f"Нет изображения для {i+1}.")
                 except Exception as e:
-                    st.error(f"Ошибка картинки {i+1}: {e}. Проверь billing.")
+                    st.error(f"Ошибка картинки {i+1}: {e}. Проверь billing и модель.")
 
-            # Задержка для RPM (10/мин = 6 сек между)
+            # Задержка для RPM
             if i < len(paragraphs) - 1:
                 time.sleep(6)
+        
+        progress.progress((i + 1) / len(paragraphs))
 
     # Скачивания
     if prompts:
@@ -97,7 +115,7 @@ if st.button("🚀 Сгенерировать", type="primary") and text.strip()
         st.download_button(
             "📄 Скачать промпты (TXT)",
             full_prompts,
-            "prompts.txt",
+            "prompts_en.txt",
             "text/plain"
         )
 
@@ -115,6 +133,6 @@ if st.button("🚀 Сгенерировать", type="primary") and text.strip()
             "nano_banana_images.zip",
             "application/zip"
         )
-        st.success("Готово! (СинтID водяной знак на картинках).")
+        st.success("Готово! (SynthID водяной знак на картинках).")
 
-st.info("🔑 Квоты: https://ai.dev/usage\nДля большего — billing: https://console.cloud.google.com/billing\nЕсли 429 — подожди 4 сек или включи billing.")
+st.info("🔑 Квоты: https://ai.dev/usage\nДля картинок — billing: https://console.cloud.google.com/billing\nПромпты теперь на английском для лучшего качества.")
