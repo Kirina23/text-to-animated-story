@@ -1,86 +1,65 @@
 import streamlit as st
 import google.generativeai as genai
-from PIL import Image
-import io
-import zipfile
 
 # === ТВОЙ КЛЮЧ ===
 genai.configure(api_key=st.secrets["GOOGLE_API_KEY"])
 
-# Клиент для Nano Banana (новый unified SDK)
-client = genai.Client()
+# Стабильная модель для описаний (бесплатно, без preview-лимитов)
+MODEL = "gemini-1.5-flash"
 
-st.set_page_config(page_title="Текст → Картинки (Nano Banana)", layout="centered")
-st.title("📖 Текст → Картинки (Nano Banana / Gemini 2.5 Flash Image)")
+model = genai.GenerativeModel(MODEL)
+
+st.set_page_config(page_title="Текст → Описания Картинок (Gemini)", layout="centered")
+st.title("📖 Текст → Детальные Описания для Картинок (Gemini)")
 
 text = st.text_area(
-    "Вставь текст (каждый абзац = одна картинка)",
+    "Вставь текст (каждый абзац = описание одной картинки)",
     height=300,
     placeholder="Луна светила над старым замком...\n\nВдруг открылась дверь...\n\nИз неё вышел призрак..."
 )
 
 style = st.selectbox(
-    "Стиль картинок",
+    "Стиль описаний",
     ["реалистично, кинематографично", "аниме", "акварель", "фэнтези", "киберпанк", "как в Pixar", "без стиля"]
 )
 
-if st.button("🚀 Сгенерировать картинки", type="primary") and text.strip():
+if st.button("🚀 Сгенерировать описания", type="primary") and text.strip():
     paragraphs = [p.strip() for p in text.split("\n\n") if p.strip()]
 
     if not paragraphs:
         st.error("Нет абзацев! Разделяй их пустой строкой.")
         st.stop()
 
-    st.write(f"Генерирую **{len(paragraphs)}** картинок через Nano Banana...")
+    st.write(f"Генерирую **{len(paragraphs)}** детальных описаний для картинок...")
 
-    images = []
+    descriptions = []
     for i, para in enumerate(paragraphs):
-        with st.spinner(f"Картинка {i+1}/{len(paragraphs)}"):
-            prompt = f"Create a picture of: {para}"
+        with st.spinner(f"Описание {i+1}/{len(paragraphs)}"):
+            prompt = f"Создай детальное описание для генерации изображения на основе этого абзаца текста: '{para}'.\n"
             if style != "без стиля":
-                prompt += f". {style}, high quality, detailed, 16:9 aspect ratio, masterpiece"
+                prompt += f"Стиль: {style}. "
+            prompt += "Опиши сцену ярко, с деталями освещения, цветов, композиции, в формате промпта для AI-генератора изображений (например, 'Highly detailed cinematic scene of...'). Длина: 100–200 слов."
 
             try:
-                # Генерация через client.models.generate_content (из docs)
-                response = client.models.generate_content(
-                    model="gemini-2.5-flash-image",
-                    contents=[prompt],
-                )
-                
-                # Извлекаем изображение из ответа
-                img_found = False
-                for part in response.parts:
-                    if part.inline_data is not None:
-                        img = part.inline_data.as_image()  # PIL Image
-                        images.append(img)
-                        st.image(img, caption=f"{i+1}. {para[:80]}...", use_column_width=True)
-                        img_found = True
-                        break
-                
-                if not img_found:
-                    st.warning(f"Нет изображения в ответе для абзаца {i+1}. (Проверь промпт)")
-                    
+                response = model.generate_content(prompt)
+                desc = response.text.strip()
+                descriptions.append(desc)
+                st.write(f"**{i+1}. Абзац:** {para[:80]}...")
+                st.write(f"**Описание для картинки:** {desc}")
+                st.divider()
             except Exception as e:
                 st.error(f"Ошибка на абзаце {i+1}: {e}")
-                if "quota" in str(e).lower():
-                    st.warning("Квота исчерпана. Создай новый API-ключ или включи billing в Google Cloud.")
 
-    if images:
-        # ZIP-архив для скачивания
-        zip_buffer = io.BytesIO()
-        with zipfile.ZipFile(zip_buffer, "w", zipfile.ZIP_DEFLATED) as zf:
-            for idx, img in enumerate(images):
-                buf = io.BytesIO()
-                img.save(buf, format="PNG")
-                zf.writestr(f"картинка_{idx+1}.png", buf.getvalue())
-        zip_buffer.seek(0)
-
-        st.success("🎉 Готово! Картинки сгенерированы (с SynthID водяным знаком).")
+    if descriptions:
+        # Текст для скачивания (все описания одним файлом)
+        full_text = "\n\n---\n\n".join([f"Картинка {i+1}:\n{desc}" for i, desc in enumerate(descriptions, 1)])
+        
+        st.success("🎉 Готово! Используй эти описания в Midjourney, DALL-E или AI Studio для генерации реальных картинок.")
         st.download_button(
-            "📦 Скачать все картинки (ZIP)",
-            zip_buffer,
-            "nano_banana_images.zip",
-            "application/zip"
+            "📄 Скачать все описания (TXT)",
+            full_text,
+            "gemini_image_prompts.txt",
+            "text/plain"
         )
 
-st.info("🔑 Ключ: https://aistudio.google.com/app/apikey\nКвоты: https://ai.dev/usage\nВсе изображения с водяным знаком SynthID.")
+st.info("🔑 Ключ: https://aistudio.google.com/app/apikey\nЭто бесплатно и без лимитов. Для реальных картинок — включи billing и используй Imagen в Vertex AI.")
