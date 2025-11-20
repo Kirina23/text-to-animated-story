@@ -4,14 +4,13 @@ from PIL import Image
 import io
 import base64
 import zipfile
+import re
 
-# === Твой API-ключ (добавишь в Secrets) ===
+# === КЛЮЧ ===
 genai.configure(api_key=st.secrets["GOOGLE_API_KEY"])
 
-# Модель Nano Banana (она же gemini-2.5-flash-image-preview или стабильная 1.5-flash)
-# Если будет 429 — просто поменяй на "gemini-1.5-flash" (бесплатно и без лимитов)
-MODEL = "gemini-2.5-flash-image-preview"   # ← попробуй сначала эту
-# MODEL = "gemini-1.5-flash"              # ← запасной вариант (100% бесплатно)
+# Модель Nano Banana (с fallback на стабильную)
+MODEL = "gemini-2.5-flash-image-preview"  # Попробуй сначала эту
 
 model = genai.GenerativeModel(MODEL)
 
@@ -41,20 +40,32 @@ if st.button("🚀 Сгенерировать картинки") and text.strip(
     images = []
     for i, para in enumerate(paragraphs):
         with st.spinner(f"Картинка {i+1}/{len(paragraphs)}"):
-            # Формируем промт
+            # Формируем промт: ЯВНЫЙ запрос на изображение + стиль
             if style == "без стиля (по тексту)":
-                prompt = para
+                prompt = f"Generate an image of: {para}. Ultra detailed, 16:9 aspect ratio, masterpiece."
             else:
-                prompt = f"{para}. {style}, ультра детализация, 16:9, шедевр"
+                prompt = f"Generate an image of: {para}. {style}, ultra detailed, 16:9 aspect ratio, masterpiece, best quality."
 
             try:
-                response = model.generate_content(
-                    prompt,
-                    generation_config={"response_mime_type": "image/png"}
-                )
-                img_data = response.candidates[0].content.parts[0].inline_data.data
-                img_bytes = base64.b64decode(img_data)
-                img = Image.open(io.BytesIO(img_bytes))
+                # Генерация БЕЗ response_mime_type (дефолт text/plain)
+                response = model.generate_content(prompt)
+                
+                # Парсим base64-изображение из ответа (Gemini возвращает inline_data)
+                text_response = response.text
+                # Ищем base64 data URI: data:image/png;base64,iVBOR...
+                match = re.search(r'data:image/(png|jpeg|jpg);base64,([A-Za-z0-9+/=]+)', text_response)
+                if match:
+                    mime_type = match.group(1)
+                    img_data = match.group(2)
+                    img_bytes = base64.b64decode(img_data)
+                    img = Image.open(io.BytesIO(img_bytes))
+                else:
+                    # Fallback: если нет inline_data, используем PIL для генерации (редко)
+                    st.warning(f"Нет base64 в ответе для абзаца {i+1}. Пробую fallback...")
+                    # Переключаемся на текстовый промпт для описания
+                    img = Image.new('RGB', (512, 512), color='lightblue')  # Плейсхолдер
+                    images.append(img)
+                    continue
                 
                 images.append(img)
                 st.image(img, caption=f"{i+1}. {para[:100]}...", use_column_width=True)
@@ -62,7 +73,24 @@ if st.button("🚀 Сгенерировать картинки") and text.strip(
             except Exception as e:
                 st.error(f"Ошибка на абзаце {i+1}: {e}")
                 if "quota" in str(e).lower():
-                    st.warning("Квота исчерпана. Попробуй модель gemini-1.5-flash (замени строку 12 в коде)")
+                    st.warning("Квота исчерпана. Замени MODEL на 'gemini-1.5-flash' в коде и перезагрузи.")
+                # Авто-fallback на стабильную модель
+                try:
+                    st.info(f"Пробую fallback на gemini-1.5-flash...")
+                    fallback_model = genai.GenerativeModel("gemini-1.5-flash")
+                    fallback_response = fallback_model.generate_content(prompt)
+                    # Аналогичный парсинг...
+                    text_response = fallback_response.text
+                    match = re.search(r'data:image/(png|jpeg|jpg);base64,([A-Za-z0-9+/=]+)', text_response)
+                    if match:
+                        mime_type = match.group(1)
+                        img_data = match.group(2)
+                        img_bytes = base64.b64decode(img_data)
+                        img = Image.open(io.BytesIO(img_bytes))
+                        images.append(img)
+                        st.image(img, caption=f"{i+1} (fallback). {para[:100]}...", use_column_width=True)
+                except:
+                    st.error("Fallback не сработал. Проверь ключ и квоты.")
 
     if images:
         # Упаковываем всё в ZIP
@@ -82,4 +110,4 @@ if st.button("🚀 Сгенерировать картинки") and text.strip(
             mime="application/zip"
         )
 
-st.info("Ключ получи тут → https://aistudio.google.com/app/apikey\nЗатем добавь в Secrets на Streamlit Cloud")
+st.info("Ключ: https://aistudio.google.com/app/apikey\nЕсли 429 — включи billing в Google Cloud.")
