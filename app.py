@@ -1,12 +1,12 @@
 import streamlit as st
-from google import genai  # Новый SDK!
+from google import genai  # Новый SDK: импорт для Gemini 2.5+
 from google.genai import types  # Для config
 from PIL import Image
 import io
 import zipfile
 
-# === ТВОЙ КЛЮЧ (автоматически берётся из secrets или env) ===
-client = genai.Client()  # Теперь работает в новом SDK!
+# === ТВОЙ КЛЮЧ (берётся из secrets) ===
+client = genai.Client()  # Теперь работает!
 
 st.set_page_config(page_title="Текст → Промпты + Картинки (Nano Banana)", layout="centered")
 st.title("📖 Текст → Промпты и Картинки (Gemini 2.5 + Nano Banana)")
