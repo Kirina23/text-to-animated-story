@@ -1,66 +1,101 @@
 import streamlit as st
 import google.generativeai as genai
-import requests
-import time
 from PIL import Image
 import io
 import zipfile
+import time
 
-# === Gemini для промптов ===
+# === ТВОЙ КЛЮЧ ===
 genai.configure(api_key=st.secrets["GOOGLE_API_KEY"])
-model = genai.GenerativeModel("gemini-2.5-flash")
 
-# === fal.ai — бесплатный Flux (не требует ключа!) ===
-FLUX_URL = "https://fal.run/fal-ai/flux/schnell"
+# АКТУАЛЬНАЯ МОДЕЛЬ (stable, бесплатно, ноябрь 2025)
+MODEL = "gemini-2.5-flash"
+model = genai.GenerativeModel(MODEL)
 
-st.set_page_config(page_title="Текст → Промпты + Картинки (Flux)", layout="centered")
-st.title("Текст → Промпты + Реальные Картинки (Flux schnell)")
+# Модель Nano Banana для картинок (preview, требует billing для стабильности)
+IMAGE_MODEL = "gemini-2.5-flash-image-preview"
+image_model = genai.GenerativeModel(IMAGE_MODEL)
 
-text = st.text_area("Вставь текст (каждый абзац = одна картинка)", height=300)
-style = st.selectbox("Стиль", ["реалистично, кинематографично", "аниме", "акварель", "фэнтези", "киберпанк", "как в Pixar", "без стиля"])
+st.set_page_config(page_title="Текст → Описания Картинок (Gemini 2.5)", layout="centered")
+st.title("📖 Текст → Детальные Промпты для Картинок (Gemini 2.5 Flash)")
 
-if st.button("Сгенерировать промпты и картинки", type="primary") and text.strip():
+text = st.text_area(
+    "Вставь текст (каждый абзац = промпт для одной картинки)",
+    height=300,
+    placeholder="Луна светила над старым замком...\n\nВдруг открылась дверь...\n\nИз неё вышел призрак..."
+)
+
+style = st.selectbox(
+    "Стиль промптов",
+    ["реалистично, кинематографично", "аниме", "акварель", "фэнтези", "киберпанк", "как в Pixar", "без стиля"]
+)
+
+generate_images = st.checkbox("Генерировать картинки из промптов (Nano Banana, требует billing, ~$0.039/шт)", value=False)
+
+if st.button("🚀 Сгенерировать промпты", type="primary") and text.strip():
     paragraphs = [p.strip() for p in text.split("\n\n") if p.strip()]
-    st.write(f"Обрабатываю {len(paragraphs)} абзацев...")
+    
+    if not paragraphs:
+        st.error("Нет абзацев! Разделяй их пустой строкой.")
+        st.stop()
 
-    images = []
+    st.write(f"Генерирую **{len(paragraphs)}** детальных промптов для изображений...")
+
     prompts = []
-
+    images = []
+    
     for i, para in enumerate(paragraphs):
-        with st.spinner(f"Абзац {i+1}/{len(paragraphs)}"):
-            # 1. Генерируем отличный EN-промпт через Gemini (как у тебя было)
-            base = f"Создай детальный промпт для генерации изображения на основе абзаца: '{para}'.\n"
+        with st.spinner(f"Промпт {i+1}/{len(paragraphs)}"):
+            base_prompt = f"Создай детальный промпт для генерации изображения на основе этого абзаца: '{para}'.\n"
             if style != "без стиля":
-                base += f"Стиль: {style}. "
-            base += "Яркое описание сцены, композиция, свет, цвета, детали. 100–150 слов. Только на английском."
+                base_prompt += f"Стиль: {style}. "
+            base_prompt += "Опиши сцену ярко: композиция, освещение, цвета, детали, эмоции. Формат: готовый промпт для AI-генератора (например, 'A highly detailed cinematic scene of...'). Длина: 100–150 слов. На английском для лучшего результата."
             
-            response = model.generate_content(base)
-            prompt_en = response.text.strip()
-            prompts.append(prompt_en)
-
-            st.write(f"**{i+1}.** {para[:100]}...")
-            st.code(prompt_en, language="text")
-
-            # 2. Генерируем картинку через Flux (бесплатно!)
             try:
-                payload = {
-                    "prompt": prompt_en,
-                    "image_size": "landscape_16_9"   # или "square", "portrait_4_3" и т.д.
-                }
-                r = requests.post(FLUX_URL, json=payload, timeout=60)
-                r.raise_for_status()
-                img = Image.open(io.BytesIO(r.content))
-                images.append(img)
-                st.image(img, caption=f"Картинка {i+1} — Flux schnell", use_column_width=True)
+                response = model.generate_content(base_prompt)
+                prompt_text = response.text.strip()
+                prompts.append(prompt_text)
+                st.write(f"**{i+1}. Абзац:** {para[:80]}...")
+                st.write(f"**Промпт для картинки:** {prompt_text}")
             except Exception as e:
-                st.error(f"Ошибка генерации картинки {i+1}: {e}")
+                st.error(f"Ошибка на абзаце {i+1}: {e}")
+                prompt_text = f"A detailed cinematic scene of: {para[:100]} in {style} style, masterpiece."
+                prompts.append(prompt_text)
+                st.write(f"**{i+1}. Абзац:** {para[:80]}...")
+                st.write(f"**Промпт (fallback):** {prompt_text}")
 
-            time.sleep(1.5)  # чтобы не спамить
+            # Генерация картинки из промпта (если включено)
+            if generate_images:
+                with st.spinner(f"Картинка {i+1}/{len(paragraphs)}"):
+                    try:
+                        # Nano Banana без generation_config (убрал MIME — по docs это вызывает 400)
+                        img_response = image_model.generate_content(prompt_text)
+                        # Извлекаем изображение
+                        img = img_response.parts[0].inline_data.as_image()  # PIL Image
+                        images.append(img)
+                        st.image(img, caption=f"Картинка {i+1} (Nano Banana)", use_column_width=True)
+                    except Exception as e:
+                        st.error(f"Ошибка картинки {i+1}: {e}. Проверь квоты/billing для Nano Banana.")
+                        st.info("Совет: Включи billing в https://console.cloud.google.com/billing (free tier = 0 для image preview).")
+
+            time.sleep(2)  # Пауза для квот (10 RPM в free tier)
 
         st.divider()
 
-    # Скачивание ZIP с картинками
+    if prompts:
+        # Все промпты одним файлом для скачивания
+        full_text = "\n\n---\n\n".join([f"Image Prompt {i+1}:\n{prompt}" for i, prompt in enumerate(prompts, 1)])
+       
+        st.success("🎉 Готово! Копируй промпты в DALL-E, Midjourney или Imagen для генерации реальных картинок.")
+        st.download_button(
+            "📄 Скачать все промпты (TXT)",
+            full_text,
+            "gemini_image_prompts.txt",
+            "text/plain"
+        )
+
     if images:
+        # ZIP с картинками
         zip_buffer = io.BytesIO()
         with zipfile.ZipFile(zip_buffer, "w", zipfile.ZIP_DEFLATED) as zf:
             for idx, img in enumerate(images):
@@ -69,10 +104,10 @@ if st.button("Сгенерировать промпты и картинки", ty
                 zf.writestr(f"картинка_{idx+1}.png", buf.getvalue())
         zip_buffer.seek(0)
         st.download_button(
-            "Скачать все картинки (ZIP)",
+            "📦 Скачать картинки (ZIP)",
             zip_buffer,
-            "flux_images.zip",
+            "nano_banana_images.zip",
             "application/zip"
         )
 
-    st.success("Готово! Всё сгенерировано прямо в приложении — бесплатно и без billing.")
+st.info("🔑 Ключ: https://aistudio.google.com/app/apikey\nКвоты: https://ai.dev/usage (free tier: 10 RPM; для Nano Banana — billing для >10 изображений/день).\nВсе картинки с SynthID-водяным знаком.")
