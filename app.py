@@ -56,24 +56,31 @@ if st.button("🚀 Сгенерировать промпты", type="primary") a
                 st.write(f"**Промпт для картинки:** {prompt_text}")
             except Exception as e:
                 st.error(f"Ошибка на абзаце {i+1}: {e}")
-                prompt_text = f"A detailed cinematic scene of: {para[:100]} in {style} style, masterpiece."
-                prompts.append(prompt_text)
-                st.write(f"**{i+1}. Абзац:** {para[:80]}...")
-                st.write(f"**Промпт (fallback):** {prompt_text}")
 
             # Генерация картинки из промпта (если включено, через Pollinations.AI — бесплатно, без ключа)
             if generate_images:
                 with st.spinner(f"Картинка {i+1}/{len(paragraphs)}"):
-                    try:
-                        # Pollinations.AI API (бесплатно, без ключа, по docs GitHub)
-                        url = "https://image.pollinations.ai/prompt/" + prompt_text.replace(" ", "%20")
-                        r = requests.get(url, timeout=30)
-                        r.raise_for_status()
-                        img = Image.open(io.BytesIO(r.content))
-                        images.append(img)
-                        st.image(img, caption=f"Картинка {i+1} (Pollinations.AI)", use_column_width=True)
-                    except Exception as e:
-                        st.error(f"Ошибка картинки {i+1}: {e}. API может быть перегружен (попробуй позже).")
+                    success = False
+                    for attempt in range(3):  # Retry 3 раза для timeout
+                        try:
+                            # Pollinations.AI API (бесплатно, без ключа, по docs GitHub)
+                            url = "https://image.pollinations.ai/prompt/" + prompt_text.replace(" ", "%20")
+                            r = requests.get(url, timeout=120)  # Увеличил до 120 сек (по рекомендациям GitHub)
+                            r.raise_for_status()
+                            img = Image.open(io.BytesIO(r.content))
+                            images.append(img)
+                            st.image(img, caption=f"Картинка {i+1} (Pollinations.AI)", use_column_width=True)
+                            success = True
+                            break
+                        except Exception as e:
+                            if "timed out" in str(e).lower():
+                                st.warning(f"Timeout (перегрузка сервера). Retry {attempt+1}/3 через 10 сек...")
+                                time.sleep(10)
+                            else:
+                                st.error(f"Ошибка картинки {i+1}: {e}. API может быть перегружен (попробуй позже).")
+                                break
+                    if not success:
+                        st.warning(f"Не удалось сгенерировать картинку {i+1} после 3 попыток. Сервер Pollinations перегружен — попробуй позже.")
 
             time.sleep(2)  # Пауза для квот Gemini (10 RPM в free tier)
 
