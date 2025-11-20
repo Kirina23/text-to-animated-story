@@ -7,13 +7,11 @@ import zipfile
 # === ТВОЙ КЛЮЧ ===
 genai.configure(api_key=st.secrets["GOOGLE_API_KEY"])
 
-# МОДЕЛЬ Nano Banana (работает бесплатно!)
-MODEL = "gemini-2.5-flash-image"
-
-model = genai.GenerativeModel(MODEL)
+# Клиент для Nano Banana (новый unified SDK)
+client = genai.Client()
 
 st.set_page_config(page_title="Текст → Картинки (Nano Banana)", layout="centered")
-st.title("📖 Текст → Картинки (Nano Banana / Gemini)")
+st.title("📖 Текст → Картинки (Nano Banana / Gemini 2.5 Flash Image)")
 
 text = st.text_area(
     "Вставь текст (каждый абзац = одна картинка)",
@@ -38,29 +36,30 @@ if st.button("🚀 Сгенерировать картинки", type="primary")
     images = []
     for i, para in enumerate(paragraphs):
         with st.spinner(f"Картинка {i+1}/{len(paragraphs)}"):
-            prompt = f"Generate an image of: {para}"
+            prompt = f"Create a picture of: {para}"
             if style != "без стиля":
                 prompt += f". {style}, high quality, detailed, 16:9 aspect ratio, masterpiece"
 
             try:
-                # Генерация через generate_content (стандартный метод)
-                response = model.generate_content(
-                    prompt,
-                    generation_config=genai.types.GenerationConfig(
-                        temperature=0.4,  # Стабильность
-                        response_mime_type="image/png"  # Формат ответа
-                    )
+                # Генерация через client.models.generate_content (из docs)
+                response = client.models.generate_content(
+                    model="gemini-2.5-flash-image",
+                    contents=[prompt],
                 )
                 
                 # Извлекаем изображение из ответа
+                img_found = False
                 for part in response.parts:
-                    if part.inline_data:
+                    if part.inline_data is not None:
                         img = part.inline_data.as_image()  # PIL Image
                         images.append(img)
                         st.image(img, caption=f"{i+1}. {para[:80]}...", use_column_width=True)
+                        img_found = True
                         break
-                    else:
-                        st.warning(f"Нет изображения в ответе для абзаца {i+1}. Промпт: {prompt[:100]}...")
+                
+                if not img_found:
+                    st.warning(f"Нет изображения в ответе для абзаца {i+1}. (Проверь промпт)")
+                    
             except Exception as e:
                 st.error(f"Ошибка на абзаце {i+1}: {e}")
                 if "quota" in str(e).lower():
@@ -76,7 +75,7 @@ if st.button("🚀 Сгенерировать картинки", type="primary")
                 zf.writestr(f"картинка_{idx+1}.png", buf.getvalue())
         zip_buffer.seek(0)
 
-        st.success("🎉 Готово! Картинки сгенерированы.")
+        st.success("🎉 Готово! Картинки сгенерированы (с SynthID водяным знаком).")
         st.download_button(
             "📦 Скачать все картинки (ZIP)",
             zip_buffer,
