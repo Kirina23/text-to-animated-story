@@ -1,65 +1,105 @@
 import streamlit as st
 import google.generativeai as genai
+from PIL import Image
+import io
+import zipfile
+from io import BytesIO
 
 # === ТВОЙ КЛЮЧ ===
 genai.configure(api_key=st.secrets["GOOGLE_API_KEY"])
 
-# АКТУАЛЬНАЯ МОДЕЛЬ (stable, бесплатно, ноябрь 2025)
-MODEL = "gemini-2.5-flash"
+# Стабильная модель для промптов (бесплатно)
+PROMPT_MODEL = "gemini-2.5-flash"
+prompt_model = genai.GenerativeModel(PROMPT_MODEL)
 
-model = genai.GenerativeModel(MODEL)
+# Клиент для Nano Banana (картинки — требует billing!)
+client = genai.Client()
 
-st.set_page_config(page_title="Текст → Описания Картинок (Gemini 2.5)", layout="centered")
-st.title("📖 Текст → Детальные Промпты для Картинок (Gemini 2.5 Flash)")
+st.set_page_config(page_title="Текст → Промпты + Картинки (Nano Banana)", layout="centered")
+st.title("📖 Текст → Промпты и Картинки (Gemini 2.5 + Nano Banana)")
 
 text = st.text_area(
-    "Вставь текст (каждый абзац = промпт для одной картинки)",
+    "Вставь текст (каждый абзац = промпт + картинка)",
     height=300,
     placeholder="Луна светила над старым замком...\n\nВдруг открылась дверь...\n\nИз неё вышел призрак..."
 )
 
 style = st.selectbox(
-    "Стиль промптов",
+    "Стиль",
     ["реалистично, кинематографично", "аниме", "акварель", "фэнтези", "киберпанк", "как в Pixar", "без стиля"]
 )
 
-if st.button("🚀 Сгенерировать промпты", type="primary") and text.strip():
+generate_images = st.checkbox("Генерировать реальные картинки (требует billing, ~$0.039/шт)", value=False)
+
+if st.button("🚀 Сгенерировать", type="primary") and text.strip():
     paragraphs = [p.strip() for p in text.split("\n\n") if p.strip()]
 
     if not paragraphs:
         st.error("Нет абзацев! Разделяй их пустой строкой.")
         st.stop()
 
-    st.write(f"Генерирую **{len(paragraphs)}** детальных промптов для изображений...")
+    st.write(f"Обрабатываю **{len(paragraphs)}** абзацев...")
 
     prompts = []
+    images = []
+
     for i, para in enumerate(paragraphs):
-        with st.spinner(f"Промпт {i+1}/{len(paragraphs)}"):
-            base_prompt = f"Создай детальный промпт для генерации изображения на основе этого абзаца: '{para}'.\n"
-            if style != "без стиля":
-                base_prompt += f"Стиль: {style}. "
-            base_prompt += "Опиши сцену ярко: композиция, освещение, цвета, детали, эмоции. Формат: готовый промпт для AI-генератора (например, 'A highly detailed cinematic scene of...'). Длина: 100–150 слов. На английском для лучшего результата."
-
+        with st.spinner(f"Абзац {i+1}/{len(paragraphs)}"):
+            # 1. Генерация промпта (бесплатно)
+            base_prompt = f"Создай детальный промпт для изображения на основе: '{para}'. Стиль: {style if style != 'без стиля' else 'натуральный'}. Формат: 'A highly detailed [style] image of [scene], masterpiece, 16:9'."
             try:
-                response = model.generate_content(base_prompt)
-                prompt_text = response.text.strip()
-                prompts.append(prompt_text)
+                response = prompt_model.generate_content(base_prompt)
+                img_prompt = response.text.strip()
+                prompts.append(img_prompt)
                 st.write(f"**{i+1}. Абзац:** {para[:80]}...")
-                st.write(f"**Промпт для картинки:** {prompt_text}")
-                st.divider()
+                st.write(f"**Промпт:** {img_prompt}")
             except Exception as e:
-                st.error(f"Ошибка на абзаце {i+1}: {e}")
+                st.error(f"Ошибка промпта {i+1}: {e}")
+                continue
 
+            # 2. Генерация картинки (если включено)
+            if generate_images:
+                try:
+                    # Nano Banana: generate_content с промптом
+                    img_response = client.models.generate_content(
+                        model="gemini-2.5-flash-image-preview",
+                        contents=[img_prompt],
+                    )
+                    # Извлекаем изображение
+                    for part in img_response.candidates[0].content.parts:
+                        if part.inline_data is not None:
+                            img_bytes = part.inline_data.data
+                            img = Image.open(BytesIO(img_bytes))
+                            images.append(img)
+                            st.image(img, caption=f"Картинка {i+1}", use_column_width=True)
+                            break
+                except Exception as e:
+                    st.error(f"Ошибка картинки {i+1}: {e}. Проверь billing и квоты.")
+
+    # Скачивания
     if prompts:
-        # Все промпты одним файлом для скачивания
-        full_text = "\n\n---\n\n".join([f"Image Prompt {i+1}:\n{prompt}" for i, prompt in enumerate(prompts, 1)])
-        
-        st.success("🎉 Готово! Копируй промпты в DALL-E, Midjourney или Imagen для генерации реальных картинок.")
+        full_prompts = "\n\n---\n\n".join([f"Prompt {i+1}:\n{p}" for i, p in enumerate(prompts, 1)])
         st.download_button(
-            "📄 Скачать все промпты (TXT)",
-            full_text,
-            "gemini_image_prompts.txt",
+            "📄 Скачать промпты (TXT)",
+            full_prompts,
+            "prompts.txt",
             "text/plain"
         )
 
-st.info("🔑 Ключ: https://aistudio.google.com/app/apikey\nКвоты: https://ai.dev/usage\nМодель gemini-2.5-flash — бесплатно, без лимитов на старте. Для реальных изображений включи billing и используй gemini-2.5-flash-image.")
+    if images:
+        zip_buffer = io.BytesIO()
+        with zipfile.ZipFile(zip_buffer, "w", zipfile.ZIP_DEFLATED) as zf:
+            for idx, img in enumerate(images):
+                buf = io.BytesIO()
+                img.save(buf, format="PNG")
+                zf.writestr(f"картинка_{idx+1}.png", buf.getvalue())
+        zip_buffer.seek(0)
+        st.download_button(
+            "📦 Скачать картинки (ZIP)",
+            zip_buffer,
+            "nano_banana_images.zip",
+            "application/zip"
+        )
+        st.success("Готово! Картинки сгенерированы (с SynthID водяным знаком).")
+
+st.info("🔑 Billing: https://console.cloud.google.com/billing\nКвоты: https://ai.dev/usage\nБез 'Генерировать картинки' — только промпты бесплатно.")
