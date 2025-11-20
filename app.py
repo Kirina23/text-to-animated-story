@@ -1,101 +1,85 @@
 import streamlit as st
 import google.generativeai as genai
 from PIL import Image
-import moviepy.editor as mp
 import io
-import os
 import base64
-import time
+import zipfile
 
-# === КЛЮЧ ===
-GOOGLE_API_KEY = st.secrets["GOOGLE_API_KEY"]
-genai.configure(api_key=GOOGLE_API_KEY)
+# === Твой API-ключ (добавишь в Secrets) ===
+genai.configure(api_key=st.secrets["GOOGLE_API_KEY"])
 
-# === МОДЕЛИ (актуально ноябрь 2025) ===
-IMAGE_MODEL = "gemini-2.5-flash-image-preview"   # Nano Banana
-VIDEO_MODEL = "veo-3-generate-preview"           # Veo 3
+# Модель Nano Banana (она же gemini-2.5-flash-image-preview или стабильная 1.5-flash)
+# Если будет 429 — просто поменяй на "gemini-1.5-flash" (бесплатно и без лимитов)
+MODEL = "gemini-2.5-flash-image-preview"   # ← попробуй сначала эту
+# MODEL = "gemini-1.5-flash"              # ← запасной вариант (100% бесплатно)
 
-image_gen = genai.GenerativeModel(IMAGE_MODEL)
-video_gen = genai.GenerativeModel(VIDEO_MODEL)
+model = genai.GenerativeModel(MODEL)
 
-st.title("Текст → Картинки (Nano Banana) → Видео (Veo 3)")
+st.set_page_config(page_title="Текст → Картинки (Nano Banana)", layout="centered")
+st.title("Текст → Картинки через Nano Banana")
 
-text = st.text_area("Вставь текст (каждый абзац — отдельный кадр)", height=300)
+text = st.text_area(
+    "Вставь свой текст (каждый абзац = одна картинка)",
+    height=300,
+    placeholder="Жила-была девочка...\n\nОна пошла в лес...\n\nТам встретила волка..."
+)
 
-duration = st.slider("Длительность одного клипа (сек)", 4, 10, 6)
-add_movement = st.checkbox("Добавить плавный камера-пан и зум", True)
-max_paragraphs = st.slider("Максимум абзацев (экономия квот)", 1, 10, 5)
+style = st.selectbox(
+    "Стиль картинок",
+    ["реализм, кинематографично", "аниме", "акварель", "фэнтези", "киберпанк", "как в студии Ghibli", "без стиля (по тексту)"]
+)
 
-if st.button("Сгенерировать анимированную историю") and text.strip():
-    paragraphs = [p.strip() for p in text.split("\n\n") if p.strip()][:max_paragraphs]
+if st.button("🚀 Сгенерировать картинки") and text.strip():
+    paragraphs = [p.strip() for p in text.split("\n\n") if p.strip()]
+    
     if not paragraphs:
-        st.error("Нет абзацев!")
+        st.error("Не найдено абзацев. Разделяй их пустой строкой.")
         st.stop()
 
-    progress = st.progress(0)
-    clips = []
+    st.write(f"Генерирую **{len(paragraphs)}** картинок...")
 
+    images = []
     for i, para in enumerate(paragraphs):
-        st.write(f"**Кадр {i+1}/{len(paragraphs)}:** {para[:100]}...")
+        with st.spinner(f"Картинка {i+1}/{len(paragraphs)}"):
+            # Формируем промт
+            if style == "без стиля (по тексту)":
+                prompt = para
+            else:
+                prompt = f"{para}. {style}, ультра детализация, 16:9, шедевр"
 
-        # 1. Генерация изображения (Nano Banana)
-        img_prompt = f"Ultra-detailed cinematic illustration, 16:9, masterpiece, {para}"
-        try:
-            img_resp = image_gen.generate_content(img_prompt)
-            img_bytes = base64.b64decode(img_resp.candidates[0].content.parts[0].inline_data.data)
-            img = Image.open(io.BytesIO(img_bytes))
-        except Exception as e:
-            st.error(f"Ошибка изображения: {e}")
-            continue
+            try:
+                response = model.generate_content(
+                    prompt,
+                    generation_config={"response_mime_type": "image/png"}
+                )
+                img_data = response.candidates[0].content.parts[0].inline_data.data
+                img_bytes = base64.b64decode(img_data)
+                img = Image.open(io.BytesIO(img_bytes))
+                
+                images.append(img)
+                st.image(img, caption=f"{i+1}. {para[:100]}...", use_column_width=True)
+                
+            except Exception as e:
+                st.error(f"Ошибка на абзаце {i+1}: {e}")
+                if "quota" in str(e).lower():
+                    st.warning("Квота исчерпана. Попробуй модель gemini-1.5-flash (замени строку 12 в коде)")
 
-        # 2. Убираем водяной знак (если есть)
-        try:
-            clean_resp = image_gen.generate_content([
-                "Remove any watermarks, logos, text or artifacts from this image. Keep composition and quality.",
-                img
-            ])
-            clean_bytes = base64.b64decode(clean_resp.candidates[0].content.parts[0].inline_data.data)
-            clean_img = Image.open(io.BytesIO(clean_bytes))
-        except:
-            clean_img = img  # если не получилось — используем оригинал
+    if images:
+        # Упаковываем всё в ZIP
+        zip_buffer = io.BytesIO()
+        with zipfile.ZipFile(zip_buffer, "w", zipfile.ZIP_DEFLATED) as zf:
+            for idx, img in enumerate(images):
+                buf = io.BytesIO()
+                img.save(buf, format="PNG")
+                zf.writestr(f"картинка_{idx+1}.png", buf.getvalue())
+        zip_buffer.seek(0)
 
-        st.image(clean_img, use_column_width=True)
+        st.success("Готово!")
+        st.download_button(
+            "📦 Скачать все картинки (ZIP)",
+            zip_buffer,
+            file_name="nano_banana_images.zip",
+            mime="application/zip"
+        )
 
-        # 3. Анимация в Veo 3
-        video_prompt = para
-        if add_movement:
-            video_prompt += ". Smooth cinematic camera pan, subtle zoom and parallax, professional animation"
-
-        try:
-            video_resp = video_gen.generate_content([
-                video_prompt,
-                clean_img
-            ], generation_config={"duration_seconds": duration})
-
-            video_bytes = video_resp.candidates[0].content.parts[0].file_data.bytes
-            clip = mp.VideoFileClip(io.BytesIO(video_bytes))
-            clips.append(clip)
-        except Exception as e:
-            st.error(f"Ошибка видео: {e}")
-            continue
-
-        progress.progress((i + 1) / len(paragraphs))
-
-    if not clips:
-        st.error("Не удалось сгенерировать видео")
-        st.stop()
-
-    # Склейка и скачивание
-    final = mp.concatenate_videoclips(clips)
-    final_path = "story.mp4"
-    final.write_videofile(final_path, fps=24, codec="libx264", audio=False, logger=None, verbose=False)
-
-    st.video(final_path)
-    with open(final_path, "rb") as f:
-        st.download_button("Скачать видео", f, "animated_story.mp4", "video/mp4")
-
-    os.remove(final_path)
-    for c in clips:
-        c.close()
-
-    st.success("Готово!")
+st.info("Ключ получи тут → https://aistudio.google.com/app/apikey\nЗатем добавь в Secrets на Streamlit Cloud")
